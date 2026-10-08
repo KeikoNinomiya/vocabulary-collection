@@ -1,0 +1,12 @@
+{
+  "name": "vocabulary-collection",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "YouTube の字幕と日常会話から英語フレーズを集めて間隔反復で覚える単語帳アプリ",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@supabase/supabase-js": "2.45.4",
+    "web-push": "3.6.7"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Vocabulary Collection",
+  "short_name": "Vocabulary",
+  "description": "YouTube の字幕と日常会話から英語フレーズを集めて、間隔をあけて復習する単語帳",
+  "lang": "ja",
+  "start_url": "/#today",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f6f1",
+  "theme_color": "#f5f6f1",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "outputDirectory": "public",
+  "functions": {
+    "api/ai.js": { "maxDuration": 60 },
+    "api/transcript.js": { "maxDuration": 30 },
+    "api/cron-daily.js": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/cron-daily", "schedule": "0 23 * * *" }
+  ],
+  "headers": [
+    { "source": "/sw.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+  ]
+}
