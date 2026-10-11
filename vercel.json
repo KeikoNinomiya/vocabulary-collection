@@ -1,7 +1,7 @@
 {
   "outputDirectory": "public",
   "functions": {
-    "api/ai.js": { "maxDuration": 60 },
+    "api/ai.js": { "maxDuration": 120 },
     "api/transcript.js": { "maxDuration": 30 },
     "api/cron-daily.js": { "maxDuration": 60 }
   },

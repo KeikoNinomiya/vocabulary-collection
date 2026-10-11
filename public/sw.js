@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = "vc-v1";
+const VERSION = "vc-v2";
 const SHELL = ["/", "/index.html", "/app.js", "/styles.css", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/apple-touch-icon.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm"];
 

@@ -444,33 +444,41 @@ function renderVideo(m) {
         <button class="btn" id="vfetch" ${!id || S.fetching || !navigator.onLine ? "disabled" : ""}>${S.fetching ? "字幕を取得中…" : "字幕を自動で取得"}</button>
         ${id ? `<a class="btn small ghost" href="${ytLink(id)}" target="_blank" rel="noopener">YouTubeで開く</a>` : ""}
       </div>
+      ${S.transcriptFailed && id && !v.transcript.trim() ? `<div class="panel" style="background:var(--paper);display:grid;gap:8px">
+        <strong style="font-size:14px">字幕を取得できませんでした</strong>
+        <p class="muted" style="margin:0;font-size:13px">代わりに AI（Gemini）に動画を直接見てもらい、要約とフレーズを作れます。長い動画（20分以上）は時間がかかるか失敗することがあります。</p>
+        <div><button class="btn primary small" id="vwatch" ${S.busy || !aiOK || !navigator.onLine ? "disabled" : ""}>AIに動画を直接見てもらう</button></div></div>` : ""}
       <details ${v.transcript ? "" : ""}><summary>自動で取れないときは（字幕の貼り付け方）</summary>
         <ol class="steps"><li>PCのブラウザでYouTubeの動画を開き、概要欄の下の「文字起こしを表示」を押す</li><li>右側に出た文字起こしをすべて選択してコピーし、下に貼り付ける</li></ol></details>
       <label class="f">字幕テキスト<textarea id="vtr" rows="7" placeholder="自動取得した字幕、または貼り付けた字幕">${esc(v.transcript)}</textarea></label>
       <div class="row" style="justify-content:space-between"><span class="muted" style="font-size:12px;font-family:var(--f-mono)" id="vlen">${v.transcript.length.toLocaleString()} 文字</span>
         <button class="btn primary" id="vgo" ${S.busy || !aiOK || !navigator.onLine ? "disabled" : ""}>${S.busy ? "分析中…" : "要約してフレーズを抽出"}</button></div>
       ${!aiOK ? `<p class="muted" style="font-size:13px;margin:0">要約にはVercelの環境変数 GEMINI_API_KEY が必要です。</p>` : ""}
-      ${S.busy ? `<p class="muted" style="font-size:13px;margin:0">AI が字幕を読んでいます。長い動画は1分ほどかかります。</p>` : ""}
+      ${S.busy ? `<p class="muted" style="font-size:13px;margin:0">AI が内容を読んでいます。1〜2分かかることがあります。画面はこのままでお待ちください。</p>` : ""}
     </section>
     ${r ? renderVideoResult(r) : ""}
     ${past.length ? `<section class="panel"><h3>これまでの動画</h3><div class="vlist">${past.map(p => `<div class="vitem"><span class="t">${esc(p.title || p.url)}</span><span class="row" style="flex-wrap:nowrap"><span class="muted" style="font-family:var(--f-mono);font-size:12px">${cardsArr().filter(c => c.source && ytId(c.source) === p.videoId).length}語</span><button class="btn small" data-open="${esc(p.id)}">開く</button></span></div>`).join("")}</div></section>` : ""}
   </div>`;
   const persist = () => lsSet("vc.videoDraft", S.video);
-  $("#vurl").oninput = e => { v.url = e.target.value; persist(); $("#vfetch").disabled = !ytId(v.url) || S.fetching; };
+  $("#vurl").oninput = e => { v.url = e.target.value; S.transcriptFailed = false; persist(); $("#vfetch").disabled = !ytId(v.url) || S.fetching; };
   $("#vtr").oninput = e => { v.transcript = e.target.value; $("#vlen").textContent = v.transcript.length.toLocaleString() + " 文字"; persist(); };
   $("#vfetch").onclick = fetchTranscript;
   $("#vgo").onclick = analyze;
+  if ($("#vwatch")) $("#vwatch").onclick = analyzeVideoDirect;
   m.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openPastVideo(b.dataset.open));
   if (r) bindVideoResult(m, r);
 }
 async function fetchTranscript() {
   const id = ytId(S.video.url); if (!id) return;
-  S.fetching = true; render();
+  S.fetching = true; S.transcriptFailed = false; render();
   try {
     const j = await api("/api/transcript?v=" + id);
     S.video.transcript = j.text; S.video.title = j.title; lsSet("vc.videoDraft", S.video);
     toast(`字幕を取得しました${j.auto ? "（自動生成の字幕）" : ""}`);
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    if (e.data?.canUseVideo) { S.transcriptFailed = true; S.video.title = e.data.title || S.video.title; console.warn("transcript", e.data.tried); }
+    else toast(e.message);
+  }
   S.fetching = false; render();
 }
 function renderVideoResult(r) {
@@ -527,11 +535,20 @@ async function analyze() {
   const v = S.video, id = ytId(v.url);
   if (!v.transcript.trim() || v.transcript.trim().length < 200) { toast("字幕を取得するか貼り付けてください（200文字以上）。"); return; }
   const tr = v.transcript.replace(/^\s*\d{1,2}:\d{2}(:\d{2})?\s*$/gm, "").replace(/\n{2,}/g, "\n").trim().slice(0, 150000);
+  await runAnalysis({ mode: "analyze", transcript: tr, known: cardsArr().map(c => c.phrase) }, tr);
+}
+async function analyzeVideoDirect() {
+  const id = ytId(S.video.url); if (!id) return;
+  await runAnalysis({ mode: "analyzeVideo", videoId: id, known: cardsArr().map(c => c.phrase) }, "");
+}
+async function runAnalysis(payload, tr) {
+  const v = S.video, id = ytId(v.url);
   S.busy = true; render();
   try {
-    const out = await api("/api/ai", { method: "POST", body: JSON.stringify({ mode: "analyze", transcript: tr, known: cardsArr().map(c => c.phrase) }) });
+    const out = await api("/api/ai", { method: "POST", body: JSON.stringify(payload) });
     const phrases = (Array.isArray(out?.phrases) ? out.phrases : []).filter(p => p && p.phrase).map(p => ({ phrase: String(p.phrase), meaning: String(p.meaning || ""), example: String(p.example || ""), translation: String(p.translation || ""), pick: !findDupe(p.phrase) }));
-    const res = { id: uuid(), videoId: id, url: id ? ytLink(id) : v.url, title: String(out?.title || v.title || "無題の動画"), summary: String(out?.summary || ""), points: (out?.points || []).map(String), phrases, transcript: tr.slice(0, 120000), createdAt: Date.now() };
+    const res = { id: uuid(), videoId: id, url: id ? ytLink(id) : v.url, title: String(out?.title || v.title || "無題の動画"), summary: String(out?.summary || ""), points: (out?.points || []).map(String), phrases, transcript: (tr || "").slice(0, 120000), createdAt: Date.now() };
+    S.transcriptFailed = false;
     S.videoResult = res; S.videos.set(res.id, res);
     const { error } = await S.sb.from("videos").insert({ id: res.id, video_id: id, url: res.url, title: res.title, summary: res.summary, points: res.points, phrases: phrases.map(({ pick, ...p }) => p), transcript: res.transcript });
     if (error) toast("要約の保存に失敗しました: " + error.message);
