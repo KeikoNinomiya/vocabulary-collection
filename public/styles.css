@@ -200,3 +200,5 @@ details .reader{margin-top:8px}
 @media (min-width:641px){.msheet{align-items:center}}
 @media (prefers-reduced-motion:no-preference){.msheet .panel{animation:sheetUp .18s ease-out}}
 @keyframes sheetUp{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+/* 英語の意味の下に出す日本語の意味 */
+.meaning-ja{font-size:14px;margin-top:2px}

@@ -16,6 +16,14 @@ const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { c
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)));
 const ytId = url => { const m = String(url || "").match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})/); return m ? m[1] : null; };
 const ytLink = id => `https://youtu.be/${id}`;
+const igUrl = url => /^https?:\/\/(www\.)?instagram\.com\/(reel|reels|p|tv)\/[\w-]+/i.test(String(url || "").trim());
+// 単語帳・カードに出す出典の表示（ファイルは「ファイル」、URLはリンク）
+function sourceHTML(c, n = 36) {
+  if (!c.source) return "自分で登録";
+  if (c.sourceType === "file") return `ファイル <span class="muted">${esc(short(c.sourceTitle || c.source, 24))}</span>`;
+  if (/^https?:/.test(c.source)) return `<a href="${esc(c.source)}" target="_blank" rel="noopener">${esc(short(c.sourceTitle || c.source.replace(/^https?:\/\//, ""), n))}</a>`;
+  return esc(short(c.source, n));
+}
 const short = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
 const toast = msg => { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 3000); };
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
@@ -75,14 +83,14 @@ const typing = () => /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagNam
 
 /* ---------- rows ↔ cards ---------- */
 const toRow = c => ({
-  id: c.id, phrase: c.phrase, meaning: c.meaning || "", example: c.example || "", translation: c.translation || "",
+  id: c.id, phrase: c.phrase, meaning: c.meaning || "", ...(S.noMeaningEn ? {} : { meaning_en: c.meaningEn || "" }), example: c.example || "", translation: c.translation || "",
   source: c.source || "", source_title: c.sourceTitle || "", source_type: c.sourceType || "manual", note: c.note || "",
   status: c.status, step: c.step || 0, due: c.due, reviews: c.reviews || 0, lapses: c.lapses || 0,
   last_reviewed: c.lastReviewed ? new Date(c.lastReviewed).toISOString() : null,
   created_at: new Date(c.createdAt || Date.now()).toISOString(), updated_at: new Date(c.updatedAt || Date.now()).toISOString()
 });
 const fromRow = r => ({
-  id: r.id, phrase: r.phrase, meaning: r.meaning, example: r.example, translation: r.translation, source: r.source,
+  id: r.id, phrase: r.phrase, meaning: r.meaning, meaningEn: r.meaning_en || "", example: r.example, translation: r.translation, source: r.source,
   sourceTitle: r.source_title, sourceType: r.source_type, note: r.note, status: r.status, step: r.step, due: r.due,
   reviews: r.reviews, lapses: r.lapses, lastReviewed: r.last_reviewed ? Date.parse(r.last_reviewed) : null,
   createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at)
@@ -99,7 +107,14 @@ const markPending = (id, op) => { const p = pending(); p[id] = op; setPending(p)
 async function pushOne(id, op) {
   if (op === "del") { const { error } = await S.sb.from("cards").delete().eq("id", id); if (error) throw error; return; }
   const c = S.cards.get(id); if (!c) return;
-  const { error } = await S.sb.from("cards").upsert(toRow(c)); if (error) throw error;
+  let { error } = await S.sb.from("cards").upsert(toRow(c));
+  if (error && !S.noMeaningEn && /meaning_en/.test(error.message || "")) { noMeaningEnColumn(); ({ error } = await S.sb.from("cards").upsert(toRow(c))); }
+  if (error) throw error;
+}
+// Supabase に meaning_en 列がまだないとき：英語の意味は端末にだけ保存し、案内を1回出す
+function noMeaningEnColumn() {
+  S.noMeaningEn = true;
+  toast("英語の意味を保存するには、Supabase で supabase/schema.sql をもう一度実行してください");
 }
 async function flushPending() {
   if (!S.sb || !S.user || !navigator.onLine || flushPending.busy) return;
@@ -144,7 +159,7 @@ async function loadVideos() {
 async function refresh() { await Promise.all([loadCards(), loadVideos()]); if (!S.session && !typing()) render(); else renderHeader(); }
 
 function newCard(f) {
-  return { id: uuid(), phrase: f.phrase.trim(), meaning: (f.meaning || "").trim(), example: (f.example || "").trim(), translation: (f.translation || "").trim(),
+  return { id: uuid(), phrase: f.phrase.trim(), meaning: (f.meaning || "").trim(), meaningEn: (f.meaningEn || "").trim(), example: (f.example || "").trim(), translation: (f.translation || "").trim(),
     source: (f.source || "").trim(), sourceTitle: (f.sourceTitle || "").trim(), sourceType: f.sourceType || "manual", note: (f.note || "").trim(),
     status: "Not yet", step: 0, due: today(), reviews: 0, lapses: 0, lastReviewed: null, createdAt: Date.now(), updatedAt: Date.now() };
 }
@@ -322,14 +337,20 @@ function startSession(mode, pool) {
   S.session = { mode, queue, i: 0, flipped: false, answered: null, results: { again: 0, hard: 0, good: 0 }, total: queue.length, retry: [] };
   render(); window.scrollTo(0, 0);
 }
+// 意味の表示：英語の意味をメインに、日本語の意味を下に小さく
+function meaningHTML(c) {
+  return c.meaningEn
+    ? `<div class="meaning" lang="en">${esc(c.meaningEn)}</div>${c.meaning ? `<div class="muted meaning-ja">${esc(c.meaning)}</div>` : ""}`
+    : `<div class="meaning">${esc(c.meaning)}</div>`;
+}
 function renderSession(m) {
   const s = S.session;
   if (s.i >= s.queue.length) return renderDone(m);
   const c = s.queue[s.i];
   const head = `<div class="studyhead"><button class="btn ghost small" id="quit">← 終了</button><div class="progress"><i style="width:${Math.round(s.i / s.queue.length * 100)}%"></i></div><span class="label">${s.i + 1} / ${s.queue.length}</span></div>`;
-  const srcLine = c.source ? (/^https?:/.test(c.source) ? `<a href="${esc(c.source)}" target="_blank" rel="noopener">${esc(c.sourceTitle || c.source)}</a>` : esc(c.source)) : "";
+  const srcLine = c.source ? sourceHTML(c, 60) : "";
   const back = `<div class="back">
-      <div class="meaning">${esc(c.meaning)}</div>
+      ${meaningHTML(c)}
       ${c.example ? `<div class="quote">${highlight(c.example, c.phrase)} ${spkBtn(c.example, "例文を読み上げ")}</div>` : ""}
       ${c.translation ? `<div class="muted">${esc(c.translation)}</div>` : ""}
       ${c.note ? `<div class="muted" style="font-size:13px">メモ: ${esc(c.note)}</div>` : ""}
@@ -350,7 +371,7 @@ function renderSession(m) {
          <div class="meaning" style="font-size:20px">${esc(c.translation || c.meaning)}</div>
          ${c.translation ? `<div class="muted">ヒント: ${esc(short(c.meaning, 60))}</div>` : ""}
          ${s.flipped ? `<div class="phrase">${esc(c.phrase)} ${spkBtn(c.phrase)}</div>` : ""}`;
-    const backR = `<div class="back">${c.example ? `<div class="quote">${highlight(c.example, c.phrase)} ${spkBtn(c.example, "例文を読み上げ")}</div>` : ""}<div class="meaning">${esc(c.meaning)}</div></div>`;
+    const backR = `<div class="back">${c.example ? `<div class="quote">${highlight(c.example, c.phrase)} ${spkBtn(c.example, "例文を読み上げ")}</div>` : ""}${meaningHTML(c)}</div>`;
     body = `<div class="fc" id="card" tabindex="0" role="button" aria-label="カードをめくる">${front}${s.flipped ? (s.mode === "flash" ? back : backR) : `<div class="hint">タップで答えを見る</div>`}</div>${s.flipped ? gradesHTML : ""}`;
   } else {
     if (!s.choices) s.choices = buildChoices(c, s.mode);
@@ -433,21 +454,21 @@ document.addEventListener("keydown", e => {
 /* ---------- 動画から学ぶ ---------- */
 /* ---------- 教材から学ぶ（YouTube動画・Web記事・ファイル） ---------- */
 const MODES = {
-  video: { tab: "YouTube動画", text: "字幕テキスト", placeholder: "自動取得した字幕、または貼り付けた字幕" },
+  video: { tab: "動画", text: "字幕テキスト", placeholder: "自動取得した字幕、または貼り付けた字幕" },
   article: { tab: "Web記事", text: "記事の本文", placeholder: "読み込んだ本文、またはコピーして貼り付けた本文" },
   file: { tab: "ファイル", text: "文書の本文", placeholder: "読み込んだファイルの本文" }
 };
 const FILE_ACCEPT = ".pdf,.docx,.html,.htm,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/html,text/plain";
 // 保存済みの教材がどの種類か（videos テーブルの列から判断する）
-const materialKind = p => p.videoId ? "video" : /^https?:/.test(p.url || "") ? "article" : "file";
+const materialKind = p => p.videoId || igUrl(p.url) ? "video" : /^https?:/.test(p.url || "") ? "article" : "file";
 const KIND_JA = { video: "動画", article: "記事", file: "文書" };
 // 単語帳の「出典」の絞り込みに使うキー
-const srcKey = c => { const y = ytId(c.source); return y ? "yt:" + y : (c.sourceType === "article" || c.sourceType === "file") && c.source ? "src:" + c.source : "manual"; };
+const srcKey = c => { const y = ytId(c.source); return y ? "yt:" + y : ["article", "file", "video"].includes(c.sourceType) && c.source ? "src:" + c.source : "manual"; };
 
 // いま開いている教材の出典（カードの source / sourceTitle / sourceType になる）
 function currentSource() {
   const v = S.video, mode = v.mode || "video";
-  if (mode === "video") { const id = ytId(v.url); return { source: id ? ytLink(id) : v.url, sourceTitle: v.title || "", sourceType: "video" }; }
+  if (mode === "video") { const id = ytId(v.url); return { source: id ? ytLink(id) : v.url.trim(), sourceTitle: v.title || (igUrl(v.url) ? "Instagramの動画" : ""), sourceType: "video" }; }
   if (mode === "article") return { source: v.articleUrl || "", sourceTitle: v.title || "", sourceType: "article" };
   return { source: v.fileName || "", sourceTitle: v.title || v.fileName || "", sourceType: "file" };
 }
@@ -463,16 +484,22 @@ function renderVideo(m) {
     <section class="panel stack">
       <div class="seg" role="tablist" aria-label="教材の種類">${Object.entries(MODES).map(([k, x]) => `<button role="tab" data-mode="${k}" aria-selected="${mode === k}">${x.tab}</button>`).join("")}</div>
       ${mode === "video" ? `
-        <label class="f">YouTube のリンク<input type="url" id="vurl" placeholder="https://youtu.be/…" value="${esc(v.url)}" inputmode="url"></label>
-        <div class="row">
+        <label class="f">動画のリンク（YouTube・Instagram）<input type="url" id="vurl" placeholder="https://youtu.be/… または https://www.instagram.com/reel/…" value="${esc(v.url)}" inputmode="url"></label>
+        <div class="row" id="ytrow" ${igUrl(v.url) ? "hidden" : ""}>
           <button class="btn" id="vfetch" ${!id || S.fetching || off ? "disabled" : ""}>${S.fetching ? "字幕を取得中…" : "字幕を自動で取得"}</button>
           ${id ? `<a class="btn small ghost" href="${ytLink(id)}" target="_blank" rel="noopener">YouTubeで開く</a>` : ""}
+        </div>
+        <div class="panel" id="igguide" style="background:var(--paper);display:grid;gap:6px" ${igUrl(v.url) ? "" : "hidden"}>
+          <strong style="font-size:14px">Instagramの動画は、文字起こしを貼り付けて使います</strong>
+          <p class="muted" style="margin:0;font-size:13px">Instagramには字幕を取り出す仕組みがないため、自動では取得できません。次のどれかの方法で英文を用意して、下の欄に貼り付けてください。登録した語の出典には、このリンクが入ります。</p>
+          <ul class="steps" style="margin:0"><li>投稿のキャプション（説明文）に英文があれば、それをコピーする</li><li>iPhoneでリールを一時停止し、画面の字幕を長押し（テキスト認識表示）してコピーする</li><li>聞き取った英文を自分で書き起こす</li></ul>
+          <div><a class="btn small ghost" id="igopen" href="${esc(igUrl(v.url) ? v.url.trim() : "#")}" target="_blank" rel="noopener">Instagramで開く</a></div>
         </div>
         ${S.transcriptFailed && id && !v.transcript.trim() ? `<div class="panel" style="background:var(--paper);display:grid;gap:8px">
           <strong style="font-size:14px">字幕を取得できませんでした</strong>
           <p class="muted" style="margin:0;font-size:13px">代わりに AI（Gemini）に動画を直接見てもらい、要約とフレーズを作れます。長い動画（20分以上）は時間がかかるか失敗することがあります。</p>
           <div><button class="btn primary small" id="vwatch" ${S.busy || !aiOK || off ? "disabled" : ""}>AIに動画を直接見てもらう</button></div></div>` : ""}
-        <details><summary>自動で取れないときは（字幕の貼り付け方）</summary>
+        <details id="ythelp" ${igUrl(v.url) ? "hidden" : ""}><summary>自動で取れないときは（字幕の貼り付け方）</summary>
           <ol class="steps"><li>PCのブラウザでYouTubeの動画を開き、概要欄の下の「文字起こしを表示」を押す</li><li>右側に出た文字起こしをすべて選択してコピーし、下に貼り付ける</li></ol></details>`
       : mode === "article" ? `
         <label class="f">記事のURL<input type="url" id="aurl" placeholder="https://www.bbc.com/news/…" value="${esc(v.articleUrl || "")}" inputmode="url"></label>
@@ -495,7 +522,7 @@ function renderVideo(m) {
       <div><h3 style="margin:0">本文を読む</h3><p class="muted" style="margin:4px 0 0;font-size:13px">覚えたい単語や表現を指でなぞる（ドラッグして選ぶ）と「登録」ボタンが出ます。AIがこの文での意味と訳を調べ、本文の文をそのまま例文にします。</p></div>
       ${readerHTML(v.transcript, currentSource().source)}</section>` : ""}
     ${r ? renderVideoResult(r) : ""}
-    ${past.length ? `<section class="panel"><h3>これまでの教材</h3><div class="vlist">${past.map(p => { const k = materialKind(p); return `<div class="vitem"><span class="t"><span class="kind">${KIND_JA[k]}</span>${esc(p.title || p.url)}</span><span class="row" style="flex-wrap:nowrap"><span class="muted" style="font-family:var(--f-mono);font-size:12px">${cardsArr().filter(c => c.source && (k === "video" ? ytId(c.source) === p.videoId : c.source === p.url)).length}語</span><button class="btn small" data-open="${esc(p.id)}">開く</button></span></div>`; }).join("")}</div></section>` : ""}
+    ${past.length ? `<section class="panel"><h3>これまでの教材</h3><div class="vlist">${past.map(p => { const k = materialKind(p); return `<div class="vitem"><span class="t"><span class="kind">${KIND_JA[k]}</span>${esc(p.title || p.url)}</span><span class="row" style="flex-wrap:nowrap"><span class="muted" style="font-family:var(--f-mono);font-size:12px">${cardsArr().filter(c => c.source && (p.videoId ? ytId(c.source) === p.videoId : c.source === p.url)).length}語</span><button class="btn small" data-open="${esc(p.id)}">開く</button></span></div>`; }).join("")}</div></section>` : ""}
   </div>`;
   const persist = () => lsSet("vc.videoDraft", S.video);
   m.querySelectorAll(".seg [data-mode]").forEach(b => b.onclick = () => {
@@ -503,7 +530,12 @@ function renderVideo(m) {
     // 種類を切り替えたら本文は空にする（別の教材が混ざらないように）
     Object.assign(v, { mode: b.dataset.mode, transcript: "", title: "" }); S.reading = false; S.transcriptFailed = false; persist(); render();
   });
-  if ($("#vurl")) $("#vurl").oninput = e => { v.url = e.target.value; S.transcriptFailed = false; persist(); $("#vfetch").disabled = !ytId(v.url) || S.fetching; };
+  if ($("#vurl")) $("#vurl").oninput = e => {
+    v.url = e.target.value; S.transcriptFailed = false; persist();
+    $("#vfetch").disabled = !ytId(v.url) || S.fetching;
+    const ig = igUrl(v.url);
+    $("#ytrow").hidden = ig; $("#ythelp").hidden = ig; $("#igguide").hidden = !ig; if (ig) $("#igopen").href = v.url.trim();
+  };
   if ($("#vfetch")) $("#vfetch").onclick = fetchTranscript;
   if ($("#vwatch")) $("#vwatch").onclick = analyzeVideoDirect;
   if ($("#aurl")) $("#aurl").oninput = e => { v.articleUrl = e.target.value.trim(); persist(); $("#afetch").disabled = !/^https?:\/\/\S+\.\S+/.test(v.articleUrl) || S.fetching; };
@@ -673,7 +705,8 @@ async function openMarkSheet({ phrase, sentence }) {
   wrap.innerHTML = `<form class="panel stack" autocomplete="off">
     <div class="row" style="justify-content:space-between"><h3 style="margin:0">語句を登録</h3><span class="muted" style="font-size:12px" id="m-state">AIが意味を調べています…</span></div>
     <label class="f">英語のフレーズ・単語<input type="text" id="m-phrase" value="${esc(phrase)}" style="font-weight:700" autocapitalize="off"></label>
-    <label class="f">意味・解説<input type="text" id="m-meaning" placeholder="AIの下書きを待つか、自分で入力"></label>
+    <label class="f">意味（英語）<input type="text" id="m-meaningEn" placeholder="AIの下書きを待つか、自分で入力" lang="en"></label>
+    <label class="f">意味（日本語）<input type="text" id="m-meaning"></label>
     <label class="f">例文（本文の文）<textarea id="m-example" rows="3">${esc(sentence)}</textarea></label>
     <label class="f">例文の訳<input type="text" id="m-translation"></label>
     <p class="muted" style="margin:0;font-size:12px">出典: ${esc(short(src.sourceTitle || src.source || "（なし）", 40))}</p>
@@ -685,13 +718,13 @@ async function openMarkSheet({ phrase, sentence }) {
   document.addEventListener("keydown", onKey);
   wrap.addEventListener("click", e => { if (e.target === wrap) close(); });
   $("#m-cancel", wrap).onclick = close;
-  $("#m-meaning", wrap).focus({ preventScroll: true });
+  $("#m-meaningEn", wrap).focus({ preventScroll: true });
 
   // AIの下書き（失敗しても手で入力して登録できる）
   if (S.cfg?.ai !== false && navigator.onLine) {
     api("/api/ai", { method: "POST", body: JSON.stringify({ mode: "fill", phrase, sentence }) }).then(out => {
       if (!wrap.isConnected) return;
-      [["phrase", out?.phrase], ["meaning", out?.meaning], ["translation", out?.translation]].forEach(([k, val]) => {
+      [["phrase", out?.phrase], ["meaningEn", out?.meaning_en], ["meaning", out?.meaning], ["translation", out?.translation]].forEach(([k, val]) => {
         const el = $("#m-" + k, wrap); if (val && (k === "phrase" || !el.value.trim())) el.value = String(val);
       });
       $("#m-state", wrap).textContent = "AIの下書きです。直してから登録できます";
@@ -705,7 +738,7 @@ async function openMarkSheet({ phrase, sentence }) {
     const d = findDupe(g("phrase"));
     if (d) { toast(`「${d.phrase}」は登録済みです`); return; }
     $("#m-save", wrap).disabled = true;
-    await saveCard(newCard({ phrase: g("phrase"), meaning: g("meaning"), example: g("example"), translation: g("translation"), ...src }));
+    await saveCard(newCard({ phrase: g("phrase"), meaning: g("meaning"), meaningEn: g("meaningEn"), example: g("example"), translation: g("translation"), ...src }));
     close();
     toast(`「${g("phrase")}」を登録しました。今日の復習に入っています`);
     const y = window.scrollY; render(); window.scrollTo(0, y);
@@ -723,7 +756,8 @@ function renderVideoResult(r) {
       <div>${r.phrases.map((p, i) => { const d = findDupe(p.phrase); return `<div class="cand">
         <input type="checkbox" data-i="${i}" ${p.pick ? "checked" : ""} aria-label="${esc(p.phrase)} を保存">
         <div class="ed"><input type="text" data-f="phrase" data-i="${i}" value="${esc(p.phrase)}" style="font-weight:700">
-          <input type="text" data-f="meaning" data-i="${i}" value="${esc(p.meaning)}">
+          <input type="text" data-f="meaningEn" data-i="${i}" value="${esc(p.meaningEn || "")}" placeholder="意味（英語）" lang="en">
+          <input type="text" data-f="meaning" data-i="${i}" value="${esc(p.meaning)}" placeholder="意味（日本語）">
           <textarea data-f="example" data-i="${i}">${esc(p.example)}</textarea>
           <input type="text" data-f="translation" data-i="${i}" value="${esc(p.translation)}">
           ${d ? `<span class="dupe">単語帳に登録済み: ${esc(d.phrase)}（${STATUS_JA[d.status]}）</span>` : ""}</div></div>`; }).join("")}</div>
@@ -757,7 +791,7 @@ async function openPastVideo(id) {
   let transcript = "";
   try { const { data } = await S.sb.from("videos").select("transcript").eq("id", id).single(); transcript = data?.transcript || ""; } catch {}
   S.reading = false;
-  S.videoResult = { ...p, kind: materialKind(p), transcript, phrases: (p.phrases || []).map(x => ({ ...x, pick: false })) };
+  S.videoResult = { ...p, kind: materialKind(p), transcript, phrases: (p.phrases || []).map(({ meaning_en, ...x }) => ({ ...x, meaningEn: x.meaningEn || meaning_en || "", pick: false })) };
   render(); $("#vres")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function analyze() {
@@ -777,11 +811,11 @@ async function runAnalysis(payload, tr) {
   S.busy = true; render();
   try {
     const out = await api("/api/ai", { method: "POST", body: JSON.stringify(payload) });
-    const phrases = (Array.isArray(out?.phrases) ? out.phrases : []).filter(p => p && p.phrase).map(p => ({ phrase: String(p.phrase), meaning: String(p.meaning || ""), example: String(p.example || ""), translation: String(p.translation || ""), pick: !findDupe(p.phrase) }));
+    const phrases = (Array.isArray(out?.phrases) ? out.phrases : []).filter(p => p && p.phrase).map(p => ({ phrase: String(p.phrase), meaning: String(p.meaning || ""), meaningEn: String(p.meaning_en || ""), example: String(p.example || ""), translation: String(p.translation || ""), pick: !findDupe(p.phrase) }));
     const res = { id: uuid(), kind: mode, videoId: id, url: src.source, title: String(out?.title || v.title || `無題の${KIND_JA[mode]}`), summary: String(out?.summary || ""), points: (out?.points || []).map(String), phrases, transcript: (tr || "").slice(0, 120000), createdAt: Date.now() };
     S.transcriptFailed = false; S.reading = false;
     S.videoResult = res; S.videos.set(res.id, res);
-    const { error } = await S.sb.from("videos").insert({ id: res.id, video_id: id, url: res.url, title: res.title, summary: res.summary, points: res.points, phrases: phrases.map(({ pick, ...p }) => p), transcript: res.transcript });
+    const { error } = await S.sb.from("videos").insert({ id: res.id, video_id: id, url: res.url, title: res.title, summary: res.summary, points: res.points, phrases: phrases.map(({ pick, meaningEn, ...p }) => ({ ...p, meaning_en: meaningEn })), transcript: res.transcript });
     if (error) toast("要約の保存に失敗しました: " + error.message);
   } catch (e) { toast(e.message || "要約できませんでした。"); }
   finally { S.busy = false; render(); $("#vres")?.scrollIntoView({ behavior: "smooth", block: "start" }); }
@@ -795,14 +829,15 @@ function renderBook(m) {
   let list = cardsArr().filter(c =>
     (S.bookFilter === "all" || (S.bookFilter === "due" ? c.due <= t : c.status === S.bookFilter)) &&
     (S.bookSource === "all" || srcKey(c) === S.bookSource) &&
-    (!q || [c.phrase, c.meaning, c.example, c.translation, c.note].some(x => (x || "").toLowerCase().includes(q))));
+    (!q || [c.phrase, c.meaning, c.meaningEn, c.example, c.translation, c.note].some(x => (x || "").toLowerCase().includes(q))));
   const sorters = { new: (a, b) => (b.createdAt || 0) - (a.createdAt || 0), az: (a, b) => a.phrase.localeCompare(b.phrase), due: (a, b) => (a.due || "").localeCompare(b.due || "") };
   list.sort(sorters[S.bookSort] || sorters.new);
   const c = counts();
   const srcTitle = k => {
     if (k.startsWith("yt:")) return vidTitle(k.slice(3));
     const c = cardsArr().find(x => srcKey(x) === k && x.sourceTitle);
-    return (c?.sourceTitle || k.slice(4).replace(/^https?:\/\//, "")) + (c?.sourceType === "file" ? "（文書）" : "（記事）");
+    const t = c?.sourceTitle || k.slice(4).replace(/^https?:\/\//, "");
+    return c?.sourceType === "file" ? "ファイル：" + t : t + (c?.sourceType === "video" ? "（動画）" : "（記事）");
   };
   const vidTitle = vid => { const v = [...S.videos.values()].find(x => x.videoId === vid); const card = cardsArr().find(x => ytId(x.source) === vid && x.sourceTitle); return v?.title || card?.sourceTitle || "YouTube " + vid; };
   m.innerHTML = `
@@ -828,11 +863,12 @@ function renderBook(m) {
 }
 function entryHTML(c) {
   const t = today(), dueTxt = c.due <= t ? "今日" : c.due;
-  const src = c.source ? (/^https?:/.test(c.source) ? `<a href="${esc(c.source)}" target="_blank" rel="noopener">${esc(short(c.sourceTitle || c.source.replace(/^https?:\/\//, ""), 36))}</a>` : esc(short(c.source, 36))) : "自分で登録";
+  const src = sourceHTML(c);
   const editing = S.editing === c.id;
   return `<div class="entry" data-id="${esc(c.id)}">
     <div class="h"><span class="p">${esc(c.phrase)} ${spkBtn(c.phrase)}</span><span class="pill ${STATUS[c.status]}">${STATUS_JA[c.status]}</span></div>
-    <div class="m">${esc(c.meaning)}</div>
+    ${c.meaningEn ? `<div class="m" lang="en">${esc(c.meaningEn)}</div>` : ""}
+    <div class="m${c.meaningEn ? " muted" : ""}">${esc(c.meaning)}</div>
     ${c.example ? `<div class="ex">${highlight(c.example, c.phrase)}</div>` : ""}
     ${c.translation ? `<div class="muted" style="font-size:13px">${esc(c.translation)}</div>` : ""}
     <div class="foot"><span>次回 ${dueTxt}</span><span>復習 ${c.reviews || 0}回</span><span>${src}</span>
@@ -840,7 +876,8 @@ function entryHTML(c) {
     ${editing ? `<div class="edit">
       <div class="grid2"><label class="f">フレーズ<input type="text" id="e-phrase" value="${esc(c.phrase)}"></label>
       <label class="f">ステータス<select id="e-status">${Object.keys(STATUS).map(k => `<option value="${k}" ${c.status === k ? "selected" : ""}>${STATUS_JA[k]}（${k}）</option>`).join("")}</select></label></div>
-      <label class="f">意味・解説<input type="text" id="e-meaning" value="${esc(c.meaning)}"></label>
+      <label class="f">意味（英語）<input type="text" id="e-meaningEn" value="${esc(c.meaningEn || "")}" lang="en"></label>
+      <label class="f">意味（日本語）<input type="text" id="e-meaning" value="${esc(c.meaning)}"></label>
       <label class="f">例文<textarea id="e-example" rows="2">${esc(c.example)}</textarea></label>
       <label class="f">訳<input type="text" id="e-translation" value="${esc(c.translation)}"></label>
       <div class="grid2"><label class="f">出典（URLや場面）<input type="text" id="e-source" value="${esc(c.source)}"></label>
@@ -863,7 +900,7 @@ function bindEntries(m) {
       const g = k => $("#e-" + k).value, st = g("status");
       if (!g("phrase").trim()) { toast("フレーズを入力してください"); return; }
       if (st !== c.status) { c.step = st === "Mastered" ? MASTER_STEP : st === "Fuzzy" ? 1 : 0; c.due = st === "Mastered" ? addDays(14) : today(); }
-      Object.assign(c, { phrase: g("phrase").trim(), status: st, meaning: g("meaning").trim(), example: g("example").trim(), translation: g("translation").trim(), source: g("source").trim(), note: g("note").trim() });
+      Object.assign(c, { phrase: g("phrase").trim(), status: st, meaning: g("meaning").trim(), meaningEn: g("meaningEn").trim(), example: g("example").trim(), translation: g("translation").trim(), source: g("source").trim(), note: g("note").trim() });
       await saveCard(c); S.editing = null; toast("保存しました"); render();
     }
   });
@@ -888,7 +925,7 @@ async function importCSV(e) {
   const rows = parseCSV(await file.text()); if (rows.length < 2) { toast("CSVに行がありません"); return; }
   const h = rows[0].map(x => x.trim().toLowerCase());
   const col = (...names) => h.findIndex(x => names.some(n => x === n.toLowerCase()));
-  const ix = { status: col("status", "ステータス"), phrase: col("重要表現・フレーズ", "phrase", "word", "フレーズ"), meaning: col("解説", "meaning", "意味"), example: col("例", "example", "例文"), translation: col("訳", "translation"), source: col("引用元", "source", "出典"), title: col("出典タイトル", "source_title"), due: col("次回復習日", "due"), reviews: col("復習回数", "reviews"), step: col("step") };
+  const ix = { status: col("status", "ステータス"), phrase: col("重要表現・フレーズ", "phrase", "word", "フレーズ"), meaning: col("解説", "meaning", "意味"), meaningEn: col("意味（英語）", "meaning_en", "english meaning"), example: col("例", "example", "例文"), translation: col("訳", "translation"), source: col("引用元", "source", "出典"), title: col("出典タイトル", "source_title"), due: col("次回復習日", "due"), reviews: col("復習回数", "reviews"), step: col("step") };
   if (ix.phrase < 0) { toast("「重要表現・フレーズ」または phrase 列が見つかりません"); return; }
   const add = [];
   let skipped = 0;
@@ -896,7 +933,7 @@ async function importCSV(e) {
     const v = k => ix[k] >= 0 ? (r[ix[k]] || "").trim() : "";
     if (!v("phrase")) continue;
     if (findDupe(v("phrase")) || add.some(c => phraseTokens(c.phrase).join(" ") === phraseTokens(v("phrase")).join(" "))) { skipped++; continue; }
-    const c = newCard({ phrase: v("phrase"), meaning: v("meaning"), example: v("example"), translation: v("translation"), source: v("source"), sourceTitle: v("title"), sourceType: ytId(v("source")) ? "video" : "manual" });
+    const c = newCard({ phrase: v("phrase"), meaning: v("meaning"), meaningEn: v("meaningEn"), example: v("example"), translation: v("translation"), source: v("source"), sourceTitle: v("title"), sourceType: ytId(v("source")) ? "video" : "manual" });
     const st = v("status");
     if (STATUS[st]) { c.status = st; c.step = st === "Mastered" ? MASTER_STEP : st === "Fuzzy" ? 1 : 0; c.due = st === "Mastered" ? addDays(7) : today(); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(v("due"))) c.due = v("due");
@@ -908,7 +945,8 @@ async function importCSV(e) {
   add.forEach(c => S.cards.set(c.id, c)); cacheCards();
   if (navigator.onLine) {
     for (let i = 0; i < add.length; i += 200) {
-      const { error } = await S.sb.from("cards").upsert(add.slice(i, i + 200).map(toRow));
+      let { error } = await S.sb.from("cards").upsert(add.slice(i, i + 200).map(toRow));
+      if (error && !S.noMeaningEn && /meaning_en/.test(error.message || "")) { noMeaningEnColumn(); ({ error } = await S.sb.from("cards").upsert(add.slice(i, i + 200).map(toRow))); }
       if (error) { add.slice(i).forEach(c => markPending(c.id, "set")); break; }
     }
   } else add.forEach(c => markPending(c.id, "set"));
@@ -917,8 +955,8 @@ async function importCSV(e) {
 }
 function exportCSV() {
   const q = s => `"${String(s ?? "").replace(/"/g, '""')}"`;
-  const lines = [["Status", "重要表現・フレーズ", "解説", "例", "訳", "引用元", "出典タイトル", "次回復習日", "復習回数", "step"].join(",")];
-  cardsArr().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).forEach(c => lines.push([c.status, c.phrase, c.meaning, c.example, c.translation, c.source, c.sourceTitle, c.due, c.reviews || 0, c.step || 0].map(q).join(",")));
+  const lines = [["Status", "重要表現・フレーズ", "解説", "意味（英語）", "例", "訳", "引用元", "出典タイトル", "次回復習日", "復習回数", "step"].join(",")];
+  cardsArr().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).forEach(c => lines.push([c.status, c.phrase, c.meaning, c.meaningEn || "", c.example, c.translation, c.source, c.sourceTitle, c.due, c.reviews || 0, c.step || 0].map(q).join(",")));
   const url = URL.createObjectURL(new Blob(["﻿" + lines.join("\n")], { type: "text/csv" }));
   const a = Object.assign(document.createElement("a"), { href: url, download: `vocabulary-collection-${today()}.csv` });
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
@@ -934,7 +972,8 @@ function renderAdd(m) {
     <form class="panel stack" id="addf" autocomplete="off">
       <label class="f">英語のフレーズ・単語 *<input type="text" id="a-phrase" required value="${esc(d.phrase)}" placeholder="例: keep something at bay" style="font-size:17px;font-weight:500" autocapitalize="off"></label>
       <div class="row"><button type="button" class="btn small" id="fill" ${S.cfg?.ai === false || !navigator.onLine ? "disabled" : ""}>AIに意味と例文を補完してもらう</button></div>
-      <label class="f">意味・解説<input type="text" id="a-meaning" value="${esc(d.meaning)}" placeholder="悪いことが起こらないよう防ぐ"></label>
+      <label class="f">意味（英語）<input type="text" id="a-meaningEn" value="${esc(d.meaningEn || "")}" placeholder="to prevent something bad from affecting you" lang="en"></label>
+      <label class="f">意味（日本語）<input type="text" id="a-meaning" value="${esc(d.meaning)}" placeholder="悪いことが起こらないよう防ぐ"></label>
       <label class="f">例文<textarea id="a-example" rows="2" placeholder="Exercise can keep heart disease at bay." autocapitalize="off">${esc(d.example)}</textarea></label>
       <label class="f">例文の訳<input type="text" id="a-translation" value="${esc(d.translation)}"></label>
       <div class="grid2"><label class="f">出典（URLや場面）<input type="text" id="a-source" value="${esc(d.source)}" placeholder="日常会話 / 同僚との雑談 / https://…"></label>
@@ -944,7 +983,7 @@ function renderAdd(m) {
     <section><div class="label" style="margin-bottom:6px">最近自分で登録したフレーズ</div>
       <div class="panel" style="padding-block:4px">${recent.length ? recent.map(c => `<div class="entry"><div class="h"><span class="p">${esc(c.phrase)}</span><span class="pill ${STATUS[c.status]}">${STATUS_JA[c.status]}</span></div><div class="m">${esc(c.meaning)}</div></div>`).join("") : `<div class="empty" style="padding:20px">まだありません</div>`}</div></section>
   </div>`;
-  const fields = ["phrase", "meaning", "example", "translation", "source", "note"];
+  const fields = ["phrase", "meaningEn", "meaning", "example", "translation", "source", "note"];
   const read = () => Object.fromEntries(fields.map(k => [k, $("#a-" + k).value]));
   const showDupe = () => { const x = findDupe($("#a-phrase").value); $("#dupeMsg").textContent = x ? `登録済み: ${x.phrase}（${STATUS_JA[x.status]}）` : ""; };
   fields.forEach(k => $("#a-" + k).oninput = () => { lsSet("vc.addDraft", read()); if (k === "phrase") showDupe(); });
@@ -955,7 +994,7 @@ function renderAdd(m) {
     try {
       const out = await api("/api/ai", { method: "POST", body: JSON.stringify({ mode: "fill", phrase: p, context: $("#a-note").value.trim() }) });
       const cur = read();
-      ["phrase", "meaning", "example", "translation"].forEach(k => { if (out?.[k] && (k === "phrase" || !cur[k].trim())) $("#a-" + k).value = String(out[k]); });
+      [["phrase", "phrase"], ["meaningEn", "meaning_en"], ["meaning", "meaning"], ["example", "example"], ["translation", "translation"]].forEach(([k, o]) => { if (out?.[o] && (k === "phrase" || !cur[k].trim())) $("#a-" + k).value = String(out[o]); });
       lsSet("vc.addDraft", read()); showDupe();
     } catch (e) { toast(e.message || "補完できませんでした。"); }
     btn.textContent = "AIに意味と例文を補完してもらう"; btn.disabled = false;
@@ -965,7 +1004,7 @@ function renderAdd(m) {
     const f = read(); if (!f.phrase.trim()) return;
     if (findDupe(f.phrase)) { toast("このフレーズは登録済みです"); return; }
     await saveCard(newCard({ ...f, sourceType: ytId(f.source) ? "video" : "manual" }));
-    lsSet("vc.addDraft", { phrase: "", meaning: "", example: "", translation: "", source: f.source, note: "" });
+    lsSet("vc.addDraft", { phrase: "", meaningEn: "", meaning: "", example: "", translation: "", source: f.source, note: "" });
     toast(`「${f.phrase.trim()}」を追加しました。今日の復習に入っています`); render(); $("#a-phrase").focus();
   };
 }

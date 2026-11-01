@@ -64,3 +64,6 @@ create policy "own videos" on public.videos for all to authenticated
 drop policy if exists "own push" on public.push_subscriptions;
 create policy "own push" on public.push_subscriptions for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- 追加（2026-11）：単語の意味（英語）。すでにテーブルがある場合も、この行で列が追加されます。
+alter table public.cards add column if not exists meaning_en text not null default '';
