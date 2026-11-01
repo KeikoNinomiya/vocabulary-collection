@@ -688,9 +688,12 @@ function placeMarkButton() {
   markUI.btn.textContent = d ? "登録済み" : `「${short(s.phrase, 18)}」を登録`;
   markUI.btn.disabled = !!d;
   // 選択範囲の下に出す（iPhone のコピーメニューは上に出るため）
-  const top = Math.min(window.innerHeight - 56, s.rect.bottom + 10), left = Math.max(12, Math.min(window.innerWidth - 12, s.rect.left + s.rect.width / 2));
-  Object.assign(markUI.btn.style, { top: top + "px", left: left + "px" });
   markUI.btn.hidden = false;
+  // ボタンの中心を選択範囲に合わせつつ、画面の端からはみ出さないようにする
+  const half = markUI.btn.offsetWidth / 2;
+  const top = Math.min(window.innerHeight - 56, s.rect.bottom + 10);
+  const left = Math.max(12 + half, Math.min(window.innerWidth - 12 - half, s.rect.left + s.rect.width / 2));
+  Object.assign(markUI.btn.style, { top: top + "px", left: left + "px" });
 }
 function hideMarkButton() { if (markUI.btn) markUI.btn.hidden = true; markUI.sel = null; }
 let markTimer = 0;
