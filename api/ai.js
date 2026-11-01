@@ -1,20 +1,28 @@
-// POST /api/ai  { mode: "analyze", transcript, known } | { mode: "fill", phrase, context }
+// POST /api/ai  { mode: "analyze", transcript, known, kind } | { mode: "fill", phrase, context, sentence }
+// kind: "video"（字幕） | "article"（Web記事） | "file"（PDF・Word などの文書）
 // Calls Google Gemini (free tier) and returns JSON for the app.
 import { env, send, requireUser, readJson } from "./_lib.js";
 
 // Tried in order until one answers. Set GEMINI_MODEL in Vercel to force a specific model.
 const MODELS = () => [env("GEMINI_MODEL"), "gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-2.5-flash"].filter(Boolean);
 
-export function analyzePrompt(transcript, known) {
-  return `あなたは日本人の英語学習者（中上級、CEFR B2〜C1）のための英語コーチです。以下はYouTube動画の字幕です。
+const KIND = {
+  video: { what: "YouTube動画の字幕", unit: "動画", quote: "字幕" },
+  article: { what: "Web記事の本文", unit: "記事", quote: "本文" },
+  file: { what: "文書（PDF・Wordなど）の本文", unit: "文書", quote: "本文" }
+};
+
+export function analyzePrompt(transcript, known, kind = "video") {
+  const k = KIND[kind] || KIND.video;
+  return `あなたは日本人の英語学習者（中上級、CEFR B2〜C1）のための英語コーチです。以下は${k.what}です。
 次の形のJSONだけを返してください:
-{"title":"動画の内容を表す短い日本語タイトル（30字以内）","summary":"日本語で4〜6文の要約","points":["日本語の要点を3〜5個"],"phrases":[{"phrase":"見出し形（句動詞・イディオム・コロケーションは原形。目的語が入る場合は (something) 等で示す）","meaning":"日本語の意味と使い方（40字程度、ニュアンスも）","example":"字幕から実際に使われている文をそのまま引用","translation":"その例文の自然な日本語訳"}]}
+{"title":"${k.unit}の内容を表す短い日本語タイトル（30字以内）","summary":"日本語で4〜6文の要約","points":["日本語の要点を3〜5個"],"phrases":[{"phrase":"見出し形（句動詞・イディオム・コロケーションは原形。目的語が入る場合は (something) 等で示す）","meaning_en":"英語での簡潔な意味（英英辞典のように、15語以内のやさしい英語）","meaning":"日本語の意味と使い方（40字程度、ニュアンスも）","example":"${k.quote}から実際に使われている文をそのまま引用","translation":"その例文の自然な日本語訳"}]}
 選ぶ基準:
 - 10〜15個。日常会話・ニュースで再利用できる句動詞、イディオム、コロケーション、やや上級の単語を優先
 - 固有名詞、専門用語だけの語、中学レベルの基本語は避ける
 - 次の登録済みフレーズは除外: ${known || "（なし）"}
 
-字幕:
+${k.quote}:
 """
 ${transcript}
 """`;
@@ -22,7 +30,7 @@ ${transcript}
 
 export function videoPrompt(known) {
   return `あなたは日本人の英語学習者（中上級、CEFR B2〜C1）のための英語コーチです。添付のYouTube動画（英語）を視聴し、話されている英語をもとに次の形のJSONだけを返してください:
-{"title":"動画の内容を表す短い日本語タイトル（30字以内）","summary":"日本語で4〜6文の要約","points":["日本語の要点を3〜5個"],"phrases":[{"phrase":"見出し形（句動詞・イディオム・コロケーションは原形。目的語が入る場合は (something) 等で示す）","meaning":"日本語の意味と使い方（40字程度、ニュアンスも）","example":"動画の中で実際に話された英文をそのまま書き起こしたもの","translation":"その例文の自然な日本語訳"}]}
+{"title":"動画の内容を表す短い日本語タイトル（30字以内）","summary":"日本語で4〜6文の要約","points":["日本語の要点を3〜5個"],"phrases":[{"phrase":"見出し形（句動詞・イディオム・コロケーションは原形。目的語が入る場合は (something) 等で示す）","meaning_en":"英語での簡潔な意味（英英辞典のように、15語以内のやさしい英語）","meaning":"日本語の意味と使い方（40字程度、ニュアンスも）","example":"動画の中で実際に話された英文をそのまま書き起こしたもの","translation":"その例文の自然な日本語訳"}]}
 選ぶ基準:
 - 10〜15個。日常会話・ニュースで再利用できる句動詞、イディオム、コロケーション、やや上級の単語を優先
 - 固有名詞、専門用語だけの語、中学レベルの基本語は避ける
@@ -30,9 +38,15 @@ export function videoPrompt(known) {
 - 次の登録済みフレーズは除外: ${known || "（なし）"}`;
 }
 
-export function fillPrompt(phrase, context) {
+export function fillPrompt(phrase, context, sentence) {
+  if (sentence) {
+    // マーカーで選んだ語句: 教材の文をそのまま例文にし、その文脈での意味を答えてもらう
+    return `日本人の中上級英語学習者の単語帳を作っています。次の英文の中で使われている「${phrase}」について、次の形のJSONだけを返してください。
+{"phrase":"見出し形（動詞は原形、句動詞・イディオムは辞書の形。目的語が入るなら (something) などで示す）","meaning_en":"この文での意味を英語で簡潔に（英英辞典のように、15語以内）","meaning":"この文での日本語の意味・ニュアンス（50字程度）","example":"下の英文をそのまま","translation":"その英文の自然な日本語訳"}
+英文: ${sentence}`;
+  }
   return `日本人の中上級英語学習者の単語帳を作っています。英語表現「${phrase}」について、次の形のJSONだけを返してください。
-{"phrase":"見出し形（目的語が入るなら (something) などで示す）","meaning":"日本語の意味・ニュアンス・使う場面（50字程度）","example":"日常会話で自然な英語の例文1つ","translation":"例文の自然な日本語訳"}${context ? `\n使われた場面のメモ: ${context}` : ""}`;
+{"phrase":"見出し形（目的語が入るなら (something) などで示す）","meaning_en":"英語での簡潔な意味（英英辞典のように、15語以内のやさしい英語）","meaning":"日本語の意味・ニュアンス・使う場面（50字程度）","example":"日常会話で自然な英語の例文1つ","translation":"例文の自然な日本語訳"}${context ? `\n使われた場面のメモ: ${context}` : ""}`;
 }
 
 async function gemini(prompt, videoUrl) {
@@ -69,9 +83,10 @@ export default async function handler(req, res) {
   try {
     if (body.mode === "analyze") {
       const tr = String(body.transcript || "").slice(0, 150000);
-      if (tr.length < 200) return send(res, 400, { error: "字幕が短すぎます" });
+      if (tr.length < 200) return send(res, 400, { error: "本文が短すぎます（200文字以上必要です）" });
       const known = (Array.isArray(body.known) ? body.known : []).slice(0, 400).join(" | ");
-      return send(res, 200, await gemini(analyzePrompt(tr, known)));
+      const kind = ["video", "article", "file"].includes(body.kind) ? body.kind : "video";
+      return send(res, 200, await gemini(analyzePrompt(tr, known, kind)));
     }
     if (body.mode === "analyzeVideo") {
       const id = String(body.videoId || "");
@@ -82,7 +97,10 @@ export default async function handler(req, res) {
     if (body.mode === "fill") {
       const p = String(body.phrase || "").trim().slice(0, 200);
       if (!p) return send(res, 400, { error: "フレーズを入力してください" });
-      return send(res, 200, await gemini(fillPrompt(p, String(body.context || "").slice(0, 500))));
+      const sentence = String(body.sentence || "").replace(/\s+/g, " ").trim().slice(0, 600);
+      const out = await gemini(fillPrompt(p, String(body.context || "").slice(0, 500), sentence));
+      if (sentence && out && typeof out === "object") out.example = sentence; // 例文は教材の文のまま
+      return send(res, 200, out);
     }
     send(res, 400, { error: "unknown mode" });
   } catch (e) {
