@@ -515,7 +515,7 @@ function renderVideo(m) {
       <div class="row" style="justify-content:space-between"><span class="muted" style="font-size:12px;font-family:var(--f-mono)" id="vlen">${v.transcript.length.toLocaleString()} 文字</span>
         <span class="row"><button class="btn" id="vread" ${v.transcript.trim() ? "" : "disabled"}>${S.reading ? "本文を閉じる" : "本文を読んで語句を登録"}</button>
         <button class="btn primary" id="vgo" ${S.busy || !aiOK || off || !enough ? "disabled" : ""}>${S.busy ? "分析中…" : "要約してフレーズを抽出"}</button></span></div>
-      ${!aiOK ? `<p class="muted" style="font-size:13px;margin:0">要約にはVercelの環境変数 GEMINI_API_KEY が必要です。</p>` : ""}
+      ${!aiOK ? `<p class="muted" style="font-size:13px;margin:0">要約には環境変数 GEMINI_API_KEY が必要です。</p>` : ""}
       ${S.busy ? `<p class="muted" style="font-size:13px;margin:0">AI が内容を読んでいます。1〜2分かかることがあります。画面はこのままでお待ちください。</p>` : ""}
     </section>
     ${S.reading && v.transcript.trim() ? `<section class="panel stack" id="vreader">

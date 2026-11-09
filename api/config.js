@@ -9,5 +9,5 @@ export default function handler(req, res) {
     ai: Boolean(env("GEMINI_API_KEY"))
   };
   const missing = Object.entries({ SUPABASE_URL: cfg.supabaseUrl, SUPABASE_PUBLISHABLE_KEY: cfg.supabaseKey }).filter(([, v]) => !v).map(([k]) => k);
-  send(res, missing.length ? 500 : 200, missing.length ? { error: `Vercel の環境変数が足りません: ${missing.join(", ")}` } : cfg);
+  send(res, missing.length ? 500 : 200, missing.length ? { error: `環境変数が足りません: ${missing.join(", ")}` } : cfg);
 }

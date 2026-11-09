@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "POST only" });
   const user = await requireUser(req, res); if (!user) return;
   const pub = env("VAPID_PUBLIC_KEY"), priv = env("VAPID_PRIVATE_KEY");
-  if (!pub || !priv) return send(res, 500, { error: "Vercel に VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY が設定されていません" });
+  if (!pub || !priv) return send(res, 500, { error: "環境変数 VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY が設定されていません" });
   webpush.setVapidDetails(`mailto:${user.email || "owner@example.com"}`, pub, priv);
   const db = adminClient();
   const { data: subs, error } = await db.from("push_subscriptions").select("*").eq("user_id", user.id);

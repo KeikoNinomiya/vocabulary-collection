@@ -1,5 +1,5 @@
 // Service worker: offline app shell + push notifications.
-const VERSION = "vc-v4";
+const VERSION = "vc-v5";
 const SHELL = ["/", "/index.html", "/app.js", "/styles.css", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/apple-touch-icon.png",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm"];
 
@@ -10,6 +10,7 @@ self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener("fetch", e => {
+  if (/^(localhost|127\.0\.0\.1)$/.test(self.location.hostname)) return; // local testing: always load fresh files
   const req = e.request, url = new URL(req.url);
   if (req.method !== "GET") return;
   if (url.origin === location.origin && url.pathname.startsWith("/api/")) {
