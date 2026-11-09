@@ -3,7 +3,7 @@
 // Calls Google Gemini (free tier) and returns JSON for the app.
 import { env, send, requireUser, readJson } from "./_lib.js";
 
-// Tried in order until one answers. Set GEMINI_MODEL in Vercel to force a specific model.
+// Tried in order until one answers. Set GEMINI_MODEL in the environment to force a specific model.
 const MODELS = () => [env("GEMINI_MODEL"), "gemini-flash-latest", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-2.5-flash"].filter(Boolean);
 
 const KIND = {
@@ -51,7 +51,7 @@ export function fillPrompt(phrase, context, sentence) {
 
 async function gemini(prompt, videoUrl) {
   const key = env("GEMINI_API_KEY");
-  if (!key) throw Object.assign(new Error("Vercel に GEMINI_API_KEY が設定されていません"), { status: 500 });
+  if (!key) throw Object.assign(new Error("環境変数 GEMINI_API_KEY が設定されていません"), { status: 500 });
   let last;
   for (const model of MODELS()) {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {

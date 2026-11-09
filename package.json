@@ -3,8 +3,15 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "YouTube の字幕と日常会話から英語フレーズを集めて間隔反復で覚える単語帳アプリ",
-  "engines": { "node": ">=20" },
+  "description": "YouTube・Web記事・文書と日常会話から英語フレーズを集めて間隔反復で覚える単語帳アプリ",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "dev": "node --env-file=.env server.js",
+    "start": "node server.js",
+    "keys": "node -e \"const k=require('web-push').generateVAPIDKeys();const c=require('crypto').randomBytes(24).toString('base64url');console.log('VAPID_PUBLIC_KEY='+k.publicKey+'\\nVAPID_PRIVATE_KEY='+k.privateKey+'\\nCRON_SECRET='+c)\""
+  },
   "dependencies": {
     "@supabase/supabase-js": "2.45.4",
     "web-push": "3.6.7"
